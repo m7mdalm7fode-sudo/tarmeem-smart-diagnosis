@@ -330,6 +330,136 @@ async function exportExcel() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+
+
+// ===== تحديث إضافي: الكهرباء من الغرف فقط + عرض المساحات لكل غرفة بدل المجموع =====
+function roomDisplayName(r, i){ return (r.name || r.type || 'فراغ') + ' ' + (typeof i === 'number' ? (i+1) : ''); }
+function roomAreaText(r, i){
+  const a = area(r);
+  const dims = (r.w && r.h) ? `${r.w}×${r.h}` : 'بدون أبعاد';
+  return `${roomDisplayName(r, i)} (${dims}${a ? ` = ${nfmt(a)} م²` : ''})`;
+}
+function roomsList(pred){
+  return rooms.map((r,i)=> pred(r) ? roomAreaText(r,i) : null).filter(Boolean).join(' - ');
+}
+function manualAreaText(label, value){ return value ? `${label} (${nfmt(value)} م²)` : ''; }
+function sumRoomElectric(){
+  const e={sockets:0,switches:0,lights:0,spots:0,acSwitches:0,heaterSockets:0};
+  rooms.forEach(r=>{
+    e.sockets += r.elec?.sockets || 0;
+    e.switches += r.elec?.switches || 0;
+    e.lights += r.elec?.lights || 0;
+    e.spots += r.elec?.spots || 0;
+    e.acSwitches += r.elec?.acSwitches || 0;
+    e.heaterSockets += r.elec?.heaterSockets || 0;
+  });
+  return e;
+}
+function addNonEmpty(items, sec, no, desc, unit='مقطوعية'){
+  if(String(desc||'').replace(/[.\s،:-]/g,'').length) add(items, sec, no, desc, unit);
+}
+function buildItems(){
+  let it=[];
+
+  const floorInstallRooms = roomsList(r=>hasFloor(r,'floor_cer_install'));
+  const floorBreakRooms = roomsList(r=>hasFloor(r,'floor_cer_break'));
+  const wallCerBreakRooms = roomsList(r=>hasWall(r,'wall_cer_break'));
+  const wallCerInstallRooms = roomsList(r=>hasWall(r,'wall_cer_install'));
+
+  if(floorBreakRooms) addNonEmpty(it,'أعمال التكسير','1.1',`تكسير السيراميك للأرضيات في: ${floorBreakRooms}. وتنفيذها طبقًا للأصول الفنية`);
+  if(wallCerBreakRooms) addNonEmpty(it,'أعمال التكسير','1.2',`تكسير سيراميك الجدران في: ${wallCerBreakRooms}. وتنفيذها طبقًا للأصول الفنية`);
+
+  if(chk('closeAC'))addNonEmpty(it,'أعمال البناء','2.1',`إغلاق فتحة مكيف بعدد (${num('closeACN')||'......'}) بالطابوق مع شبك اللياسة محمل عليه المساح والدهان من الداخل والخارج`);
+  if(chk('closeWindow'))addNonEmpty(it,'أعمال البناء','2.2',`إغلاق شباك بعدد (${num('closeWindowN')||'......'}) بالطابوق مع شبك اللياسة محمل عليه المساح والدهان من الداخل والخارج`);
+  if(chk('closeDoor'))addNonEmpty(it,'أعمال البناء','2.3',`إغلاق باب بعدد (${num('closeDoorN')||'......'}) بالطابوق مع شبك اللياسة محمل عليه المساح والدهان من الداخل والخارج`);
+  const plasterRooms = roomsList(r=>hasWall(r,'wall_plaster'));
+  const plasterManual = manualAreaText('مساحة إضافية', num('plasterArea'));
+  if(plasterRooms || chk('plasterWork')) addNonEmpty(it,'أعمال البناء','2.4',`عمل اللياسة اللازمة في: ${[plasterRooms, plasterManual].filter(Boolean).join(' - ') || 'حسب المواقع المحددة'} وتنفيذه طبقًا للأصول الفنية`);
+  if(chk('blockWork'))addNonEmpty(it,'أعمال البناء','2.5',`توريد وتركيب أعمال بلوك 20 سم بمساحة (${nfmt(num('blockArea'))}) م² وتنفيذه طبقًا للأصول الفنية`);
+
+  if(chk('concreteWall'))addNonEmpty(it,'أعمال معالجة الخرسانة','3.1',`معالجة التشققات الموجودة في واجهة المنزل بمساحة (${nfmt(num('concreteWallArea'))}) م² بالكشف والتكسير ومعالجة حديد التسليح والخرسانة طبقًا للأصول الفنية`);
+  const concreteCeilRooms = roomsList(r=>hasCeil(r,'ceil_concrete'));
+  if(chk('concreteCeil') || concreteCeilRooms)addNonEmpty(it,'أعمال معالجة الخرسانة','3.2',`معالجة الأسقف والأجزاء المتضررة في: ${concreteCeilRooms || 'المواقع المحددة'} بالكشف والتكسير ومعالجة حديد التسليح والخرسانة طبقًا للأصول الفنية`);
+  if(chk('ibeam'))addNonEmpty(it,'أعمال تدعيم الخرسانة','4.1','تدعيم سقف (...........) (I-Beam) (5*10) كل 5سم مع عمل شرائح حديد بسمك 3مم');
+
+  const alumCeilRooms = roomsList(r=>hasCeil(r,'ceil_alum')) || (chk('alumCeil') ? roomsList(r=>['مطبخ','حمام','دورة مياه'].includes(r.type)) : '');
+  if(alumCeilRooms)addNonEmpty(it,'أعمال الاسقف','5.1',`توريد وتركيب سقف مستعار شرائح ألومنيوم لكل فراغ حسب مساحته: ${alumCeilRooms}. طبقا لأصول الصناعة ولا يزيد سعر المتر عن 50 ريال`);
+  const gypsumRooms = roomsList(r=>hasCeil(r,'ceil_gypsum'));
+  const gypsumManual = manualAreaText('مساحة إضافية', num('gypsumArea'));
+  if(gypsumRooms || chk('gypsumCeil'))addNonEmpty(it,'أعمال الاسقف','5.2',`توريد وتركيب سقف مستعار جبس بورد أو بلاطات أرمسترونج 60×60 لكل فراغ حسب مساحته: ${[gypsumRooms, gypsumManual].filter(Boolean).join(' - ') || 'حسب المواقع المحددة'}. وتنفيذه طبقًا لأصول الصناعة`);
+
+  if(chk('acDrain'))addNonEmpty(it,'أعمال السباكة','6.1',`تأسيس صرف للمكيفات عدد (${num('acDrainN')||'....'}) وتسليكها لأقرب صرف صفاية لها طبقًا للأصول الفنية`);
+  if(chk('washerDrain'))addNonEmpty(it,'أعمال السباكة','6.2',`تأسيس صرف للغسالة عدد (${num('washerDrainN')||'....'}) وتسليكها لأقرب صرف صفاية لها طبقًا للأصول الفنية`);
+  if(chk('waterFilter'))addNonEmpty(it,'أعمال السباكة','6.3',`تأسيس تحلية مياه عدد (${num('waterFilterN')||'....'}) وتسليكها لأقرب دعم مياه لها طبقًا للأصول الفنية`);
+  if(chk('sewageRenew'))addNonEmpty(it,'أعمال السباكة','6.4','إحلال وتوريد شبكة الصرف الصحي وتنفيذه طبقًا للأصول الفنية');
+  if(chk('sewageMaint'))addNonEmpty(it,'أعمال السباكة','6.5','صيانة شبكة الصرف الصحي وتنفيذه طبقًا للأصول الفنية');
+
+  let san={toiletF:0,toiletA:0,heater:0,bidet:0,shower:0,basin:0,basinMix:0,exhaust:0,mirror:0,drain:0,linearDrain:0,accessories:0};
+  rooms.forEach(r=>Object.keys(san).forEach(k=>san[k]+=r.plumb?.[k]||0));
+  san.pump=num('pumpN')||(chk('pump')?1:0);
+  const sanLines=[];
+  const sanLabels={toiletF:'كرسي أفرنجي خزف سعودي',toiletA:'كرسي عربي خزف سعودي',heater:'سخان سعة 50 لتر',bidet:'شطاف',shower:'خلاط دش',basin:'مغاسل',basinMix:'خلاط مغسلة',exhaust:'شفاط',mirror:'مراية',drain:'صفايات ستانلس ستيل',linearDrain:'صفايات ستانلس ستيل طولية للشاور',accessories:'اكسسوارات دورة المياه',pump:'مضخة مياه من سمنان'};
+  Object.keys(sanLabels).forEach(k=>{ if(san[k]) sanLines.push(`- عدد ${san[k]} ${sanLabels[k]}`); });
+  if(sanLines.length)addNonEmpty(it,'أعمال السباكة','6.6',`بيان الأدوات الصحية مع توفير ما يلزم لإكمال العمل على أكمل وجه كالتالي:\n${sanLines.join('\n')}`);
+
+  const e=sumRoomElectric();
+  const eLines=[];
+  if(chk('convert220')) eLines.push('- تحويل الكهرباء إلى 220 حسب رغبة الأسرة');
+  eLines.push('- فحص وتنظيم جميع الأسلاك والتوصيلات الكهربائية المكشوفة بشانل حسب الاحتياج.');
+  eLines.push('- تجديد وتمديد الأسلاك الكهربائية الداخلية والخارجية حسب ما يتطلبه التشخيص.');
+  if(num('boardLines')) eLines.push(`- توريد وتركيب لوحة كهرباء مع القواطع المناسبة للأحمال الفعلية بالمنزل (الفنار) ${num('boardLines')} خط`);
+  if(e.lights) eLines.push(`- توريد وتركيب عدد (${e.lights}) مصباح بالسقف`);
+  if(e.spots) eLines.push(`- توريد وتركيب عدد (${e.spots}) مصباح إنارة سبوت لايت`);
+  if(e.sockets) eLines.push(`- عدد ${e.sockets} أفياش الفنار`);
+  if(e.switches) eLines.push(`- عدد ${e.switches} مفتاح مزدوج الفنار`);
+  if(e.acSwitches) eLines.push(`- عدد ${e.acSwitches} مفتاح مكيف الفنار`);
+  if(e.heaterSockets) eLines.push(`- عدد ${e.heaterSockets} أفياش للسخان والفرن 30 أمبير`);
+  if(Object.values(e).some(Boolean)||num('boardLines')||chk('convert220')) addNonEmpty(it,'أعمال الكهرباء','7.1',`${eLines.join('\n')}\nعلماً بأن البند محمل عليه كل ما يلزم لإكمال العمل على أكمل وجه`);
+
+  if(chk('roofIns'))addNonEmpty(it,'أعمال العزل','8.1',`عزل مائي بيتومين رول للسطح وبيت الدرج من شركة عوازل بعد تنظيف الأسطح مع ضمان 10 سنوات بمساحة (${nfmt(num('roofInsArea'))}) م²`);
+  if(chk('foamIns'))addNonEmpty(it,'أعمال العزل','8.2',`عزل حراري فوم لسقف الشينكو بسماكة لا تقل عن 4 سم ضمان 10 سنوات بمساحة (${nfmt(num('foamInsArea'))}) م²`);
+  if(chk('foamPour'))addNonEmpty(it,'أعمال العزل','8.3',`عمل صبة رغوية للسطح وبيت الدرج ودورات المياه مع الميول قبل العزل بمساحة (${nfmt(num('foamPourArea'))}) م²`);
+  if(chk('wcIns'))addNonEmpty(it,'أعمال العزل','8.4',`تنفيذ أعمال عزل مائي بيتومين لدورات مياه عدد (${num('wcInsN')||'....'}) مع اختبار العزل وضمان 10 سنوات`);
+  if(chk('shinko'))addNonEmpty(it,'أعمال الشينكو','9.1',`عمل شينكو بمساحة (${nfmt(num('shinkoArea'))}) م² أعمدة 10×10 وتيوبات رئيسية 5×10 وتيوبات عرضية 8×4 مع ساتر ومزراب`);
+
+  const bathRooms = roomsList(r=>['حمام','دورة مياه'].includes(r.type)&&hasFloor(r,'floor_cer_install'));
+  const kitRooms = roomsList(r=>r.type==='مطبخ'&&hasFloor(r,'floor_cer_install'));
+  const internalRooms = roomsList(r=>!['حمام','دورة مياه','مطبخ','حوش','سطح'].includes(r.type)&&hasFloor(r,'floor_cer_install'));
+  const outdoorRooms = roomsList(r=>['حوش','سطح'].includes(r.type)&&hasFloor(r,'floor_cer_install'));
+  if(bathRooms)addNonEmpty(it,'أعمال السيراميك','10.1',`توريد وتركيب حمامات بالكامل محمل عليه سيراميك أرضيات وجدران بكامل الارتفاع لكل فراغ حسب مساحته: ${bathRooms}. ولا يقل سعر متر السيراميك عن 20 ريال`);
+  if(kitRooms)addNonEmpty(it,'أعمال السيراميك','10.2',`توريد وتركيب سيراميك جدران وأرضيات المطبخ لكل فراغ حسب مساحته: ${kitRooms}. ولا يقل سعر المتر عن 20 ريال`);
+  if(internalRooms)addNonEmpty(it,'أعمال السيراميك','10.3',`توريد وتركيب سيراميك أرضيات داخلية لكل فراغ حسب مساحته: ${internalRooms}. وعمل وزرة حسب الاحتياج، ولا يقل سعر المتر عن 20 ريال`);
+  if(outdoorRooms)addNonEmpty(it,'أعمال السيراميك','10.4',`توريد وتركيب سيراميك أرضيات خشنة للحوش/السطح لكل فراغ حسب مساحته: ${outdoorRooms}. مع فواصل تمدد ولا يقل سعر المتر عن 22 ريال`);
+  if(wallCerInstallRooms)addNonEmpty(it,'أعمال السيراميك','10.5',`توريد وتركيب سيراميك جدران لكل فراغ حسب مساحته: ${wallCerInstallRooms}. ولا يقل سعر المتر عن 20 ريال`);
+
+  const paintRooms = roomsList(r=>hasWall(r,'wall_paint')||hasWall(r,'wall_moisture')||hasCeil(r,'ceil_paint')||hasCeil(r,'ceil_leak'));
+  if(paintRooms)addNonEmpty(it,'أعمال الدهانات','11.1',`تنفيذ أعمال الدهان الداخلي ناعم للجدران والأسقف المتضررة لكل فراغ حسب مساحته: ${paintRooms}. بلاستيك نصف لمعة من دهانات الجزيرة أو ما يماثلها`);
+
+  let map=[['woodDoorNewN','أعمال النجارة','12.1',n=>`إحلال وتوريد وتركيب عدد (${n}) باب خشب سويدي حشو شيبورد وجهين أوك مع الدهان والاكسسوارات`],['woodDoorMaintN','أعمال النجارة','12.2',n=>`صيانة عدد (${n}) أبواب خشبية من اكسسوارات ودهانات`],['alumWinSmallN','أعمال الألومنيوم','13.1',n=>`توريد وتركيب عدد (${n}) شباك ألومنيوم صغير سنقل ويتحمل السعر كافة الأكسسوارات`],['alumWinLargeN','أعمال الألومنيوم','13.2',n=>`توريد وتركيب عدد (${n}) شباك ألومنيوم كبير سنقل ويتحمل السعر كافة الأكسسوارات ومانع الحشرات`],['alumDoorN','أعمال الألومنيوم','13.3',n=>`إحلال وتوريد وتركيب عدد (${n}) باب ألومنيوم سنقل مع العتبة ويشمل كافة الاكسسوارات`],['alumDoorMaintN','أعمال الألومنيوم','13.4',n=>`صيانة عدد (${n}) باب ألومنيوم من اكسسوارات`],['alumWinMaintN','أعمال الألومنيوم','13.5',n=>`صيانة عدد (${n}) شباك ألومنيوم من اكسسوارات`],['ironDoor1N','أعمال الحدادة','14.1',n=>`إحلال وتوريد وتركيب عدد (${n}) باب حديد درفة واحدة ويشمل كافة الاكسسوارات والصبغ`],['ironDoor2N','أعمال الحدادة','14.2',n=>`إحلال وتوريد وتركيب عدد (${n}) باب حديد درفتين ويشمل كافة الاكسسوارات والصبغ`],['ironDoorMaintN','أعمال الحدادة','14.3',n=>`صيانة عدد (${n}) باب حديد من اكسسوارات`],['ironRailMaintM','أعمال الحدادة','14.4',n=>`صيانة درابزين حديد للسلم (${n}) م.ط`],['ironRailNewM','أعمال الحدادة','14.5',n=>`إحلال وتوريد درابزين حديد للسلم بمساحة (${n}) م.ط`]];
+  map.forEach(([id,sec,no,fn])=>{let n=num(id); if(n)addNonEmpty(it,sec,no,fn(n));});
+  return it.sort((a,b)=>parseFloat(a.no)-parseFloat(b.no));
+}
+
+function hideGeneralElectricInputs(){
+  ['socketN','switchN','acSwitchN','lampN','spotN','heaterSocketN','mainElectric'].forEach(id=>{
+    const el=$(id);
+    if(el){ const label=el.closest('label'); if(label) label.style.display='none'; }
+  });
+  const board=$('boardLines');
+  if(board){
+    const parent=board.closest('.issue-grid');
+    if(parent && !document.getElementById('electricRoomNote')){
+      const note=document.createElement('div');
+      note.id='electricRoomNote';
+      note.className='toolbar-note';
+      note.style.gridColumn='1/-1';
+      note.textContent='ملاحظة: كميات الأفياش والمفاتيح والإنارة تُدخل داخل كل غرفة فقط، والنظام يجمعها تلقائيًا في بند الكهرباء.';
+      parent.prepend(note);
+    }
+  }
+}
+setTimeout(hideGeneralElectricInputs, 300);
+
 function saveJson(){let data={project:{ownerName:val('ownerName'),projectNo:val('projectNo'),houseNo:val('houseNo'),location:val('location'),partner:val('partner'),visitDate:val('visitDate'),buildingType:val('buildingType'),totalArea:val('totalArea'),buildingAge:val('buildingAge'),diag,diagSummary:val('diagSummary')},rooms,items:buildItems()};let blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`تشخيص_${val('projectNo')||'مشروع'}.json`;a.click();}
 addRoom();
 </script>
